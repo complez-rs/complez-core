@@ -15,7 +15,5 @@ fn parse_numeric_with_boolean() {
     );
 }
 
-
-
 #[test]
 fn z3_test() {}

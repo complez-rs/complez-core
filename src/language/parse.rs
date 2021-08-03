@@ -1,4 +1,3 @@
-
 use pest::error::*;
 use pest::iterators::Pair;
 use pest::*;
@@ -67,7 +66,7 @@ impl<'a> AklParser<'a> {
 
     pub fn numeric_convert(&self, expr: AstNode) -> Int<'_> {
         let cfg = Config::new();
-        let ctx = Context::new(&cfg);
+        let _ctx = Context::new(&cfg);
         match expr {
             AstNode::NumericTerm(lhs, rhs, op) => {
                 let lhs_eval = self.numeric_convert(*lhs);
@@ -92,7 +91,7 @@ impl<'a> AklParser<'a> {
                     }
                 }
             }
-            AstNode::Ident(x) => Int::fresh_const(&self.ctx, x.as_str()),
+            AstNode::Ident(x) => Int::new_const(&self.ctx, x.as_str()),
             _ => {
                 // TODO
                 Int::from_i64(&self.ctx, 0)
@@ -337,15 +336,15 @@ impl<'a> AklParser<'a> {
         match node {
             AstNode::Func(_, _, block) => {
                 self.dfs(f_num, *block);
-            },
+            }
             AstNode::Block(nodes) => {
                 for node in nodes.clone() {
                     self.dfs(f_num, *node);
                 }
-            },
+            }
             AstNode::If(_, block) => {
                 self.dfs(f_num, *block);
-            },
+            }
             AstNode::Return => {
                 let mut cond = None;
                 for node in self.stack.clone() {
@@ -354,11 +353,21 @@ impl<'a> AklParser<'a> {
                             AstNode::BooleanTerm(_, _, _) | AstNode::Constant(_) => {
                                 dbg!(self.boolean_convert(*expr.clone()));
                                 if let Some(c) = cond {
-                                    cond = Some(c & unsafe { std::mem::transmute::<Bool<'_>, Bool<'a>>(self.boolean_convert(*expr)) });
+                                    cond = Some(
+                                        c & unsafe {
+                                            std::mem::transmute::<Bool<'_>, Bool<'a>>(
+                                                self.boolean_convert(*expr),
+                                            )
+                                        },
+                                    );
                                 } else {
-                                    cond = Some(unsafe { std::mem::transmute::<Bool<'_>, Bool<'a>>(self.boolean_convert(*expr)) });
+                                    cond = Some(unsafe {
+                                        std::mem::transmute::<Bool<'_>, Bool<'a>>(
+                                            self.boolean_convert(*expr),
+                                        )
+                                    });
                                 }
-                            },
+                            }
                             _ => {}
                         }
                     }
@@ -366,11 +375,11 @@ impl<'a> AklParser<'a> {
                 if let Some(c) = cond {
                     self.basis_f[f_num].push(Box::new(c));
                 }
-            },
-            _ => { }
+            }
+            _ => {}
         }
         self.stack.pop();
-    } 
+    }
 
     pub fn run(&mut self, source: &str) -> Result<(), Error<Rule>> {
         let pairs = Self::parse(Rule::program, source)?;
@@ -440,6 +449,10 @@ impl Ops {
             ">" => Self::Greater,
             "&&" => Self::And,
             "||" => Self::Or,
+            "+" => Self::Add,
+            "-" => Self::Sub,
+            "/" => Self::Divide,
+            "*" => Self::Multply,
             _ => Self::Unknown,
         }
     }

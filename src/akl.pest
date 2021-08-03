@@ -6,7 +6,7 @@ parm_with_type = { ident ~ ":" ~ vtype ~ ","? }
 block = { command* }
 numeric_ops = { "-" | "+" | "/" | "*" | "%" | "&" | "|" | "^" | "<<" | ">>" }
 order_ops = { "<=" | ">=" | "<" | ">" }
-eq_ops = { "==" }
+eq_ops = { "==" | "!=" }
 logic_ops = { eq_ops | order_ops }
 boolean_ops = { "&&" | "||" }
 assign_ops = { "=" }
