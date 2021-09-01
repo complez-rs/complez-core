@@ -4,13 +4,14 @@ use pest::*;
 use std::collections::HashMap;
 use std::ops::*;
 use z3::ast::{Ast, Bool, Int};
-use z3::{Config, Context};
+use z3::{Config, Context, Solver};
 
 #[derive(Parser)]
 #[grammar = "./akl.pest"]
 pub struct AklParser<'a> {
     ctx: Context,
-    funcs: Vec<Box<AstNode>>,
+    pub funcs: Vec<Box<AstNode>>,
+    variables: Vec<Vec<String>>,
     basis_t: Vec<Vec<Box<Bool<'a>>>>,
     basis_f: Vec<Vec<Box<Bool<'a>>>>,
     func_map: HashMap<Box<AstNode>, usize>,
@@ -56,6 +57,7 @@ impl<'a> AklParser<'a> {
         let ctx = Context::new(&cfg);
         Self {
             ctx: ctx,
+            variables: vec![],
             funcs: vec![],
             func_map: HashMap::new(),
             basis_f: vec![],
@@ -65,8 +67,6 @@ impl<'a> AklParser<'a> {
     }
 
     pub fn numeric_convert(&self, expr: AstNode) -> Int<'_> {
-        let cfg = Config::new();
-        let _ctx = Context::new(&cfg);
         match expr {
             AstNode::NumericTerm(lhs, rhs, op) => {
                 let lhs_eval = self.numeric_convert(*lhs);
@@ -133,6 +133,7 @@ impl<'a> AklParser<'a> {
                 };
                 match *l {
                     AstNode::NumericTerm(_, _, _) => numeric(),
+                    AstNode::BooleanTerm(_, _, _) => boolean(),
                     AstNode::Constant(x) => {
                         if x.is_numeric() {
                             numeric()
@@ -160,24 +161,39 @@ impl<'a> AklParser<'a> {
                 _ => AstNode::Todo,
             }
         } else {
-            match pairs[0].as_rule() {
-                Rule::boolean_term => {
-                    // TODO
-                    assert_eq!(pairs[2].as_rule(), Rule::boolean_term);
-                    let op = Ops::from_str(pairs[1].as_str());
-                    let lhs = self.parse_boolean(pairs[0].clone());
-                    let rhs = self.parse_boolean(pairs[2].clone());
-                    AstNode::BooleanTerm(Box::new(lhs), Box::new(rhs), op)
+            let mut i = 0;
+            let mut res = AstNode::Todo;
+            while pairs.len() > i {
+                if i == 0 {
+                    match pairs[i].as_rule() {
+                        Rule::boolean_term => {
+                            // TODO
+                            res = self.parse_boolean(pairs[i].clone());
+                        }
+                        Rule::numeric_term => {
+                            res = self.parse_numeric(pairs[i].clone());
+                        }
+                        _ => {}
+                    }
+                } else {
+                    match pairs[i].as_rule() {
+                        Rule::boolean_term => {
+                            // TODO
+                            let op = Ops::from_str(pairs[i - 1].as_str());
+                            let rhs = self.parse_boolean(pairs[i].clone());
+                            res = AstNode::BooleanTerm(Box::new(res.clone()), Box::new(rhs), op);
+                        }
+                        Rule::numeric_term => {
+                            let op = Ops::from_str(pairs[i - 1].as_str());
+                            let rhs = self.parse_numeric(pairs[i].clone());
+                            res = AstNode::BooleanTerm(Box::new(res.clone()), Box::new(rhs), op);
+                        }
+                        _ => {}
+                    }
                 }
-                Rule::numeric_term => {
-                    assert_eq!(pairs[2].as_rule(), Rule::numeric_term);
-                    let op = Ops::from_str(pairs[1].as_str());
-                    let lhs = self.parse_numeric(pairs[0].clone());
-                    let rhs = self.parse_numeric(pairs[2].clone());
-                    AstNode::BooleanTerm(Box::new(lhs), Box::new(rhs), op)
-                }
-                _ => AstNode::Todo,
+                i += 2;
             }
+            res
         }
     }
 
@@ -285,6 +301,12 @@ impl<'a> AklParser<'a> {
         let block = self.parse_block(func.next().unwrap());
         self.basis_f.push(vec![]);
         self.basis_t.push(vec![]);
+        self.variables.push(vec![]);
+        for var in variables.clone() {
+            if let AstNode::Ident(name) = *var.name {
+                self.variables[self.funcs.len()].push(name);
+            }
+        }
         self.funcs.push(Box::new(AstNode::Func(
             Box::new(name),
             variables,
@@ -351,7 +373,6 @@ impl<'a> AklParser<'a> {
                     if let AstNode::If(expr, _) = *node {
                         match *expr {
                             AstNode::BooleanTerm(_, _, _) | AstNode::Constant(_) => {
-                                dbg!(self.boolean_convert(*expr.clone()));
                                 if let Some(c) = cond {
                                     cond = Some(
                                         c & unsafe {
@@ -396,8 +417,16 @@ impl<'a> AklParser<'a> {
         }
         for i in 0..self.funcs.len() {
             self.dfs(i, *self.funcs[i].clone());
-            dbg!(self.funcs[i].clone());
-            dbg!(self.basis_f[i].clone());
+            for cond in self.basis_f[i].clone() {
+                let solver = Solver::new(&self.ctx);
+                solver.assert(&cond);
+                solver.check();
+                if let Some(model) = solver.get_model() {
+                    for var in self.variables[i].clone() {
+                        dbg!(model.eval(&Int::new_const(&self.ctx, var.as_str()), true));
+                    }
+                }
+            }
         }
         /*let f_num = self.funcs.len();
         for i in 0..f_num {
