@@ -12,9 +12,9 @@ pub struct AklParser<'a> {
     ctx: Context,
     pub funcs: Vec<Box<AstNode>>,
     variables: Vec<Vec<String>>,
-    basis_t: Vec<Vec<Box<Bool<'a>>>>,
+    basis_t: Vec<Vec<(Box<Bool<'a>>, Vec<Box<Int<'a>>>)>>, // Supported arithmetic representation yet
     basis_f: Vec<Vec<Box<Bool<'a>>>>,
-    func_map: HashMap<Box<AstNode>, usize>,
+    func_map: HashMap<String, usize>,
     stack: Vec<Box<AstNode>>,
 }
 
@@ -367,6 +367,45 @@ impl<'a> AklParser<'a> {
             AstNode::If(_, block) => {
                 self.dfs(f_num, *block);
             }
+            AstNode::Call(name, vars) => {
+                if let AstNode::Ident(x) = *name {
+                    if self.func_map.get(&x).is_some() && f_num == self.func_map[&x] {
+                        let mut cond = None;
+                        let mut vars_ret = vec![];
+                        for v in vars {
+                            vars_ret.push(Box::new(unsafe {
+                                std::mem::transmute::<Int<'_>,Int<'a>>( self.numeric_convert(*v)) }));
+                        }
+                        for node in self.stack.clone() {
+                            if let AstNode::If(expr, _) = *node {
+                                match *expr {
+                                    AstNode::BooleanTerm(_, _, _) | AstNode::Constant(_) => {
+                                        if let Some(c) = cond {
+                                            cond = Some(
+                                                c & unsafe {
+                                                    std::mem::transmute::<Bool<'_>, Bool<'a>>(
+                                                        self.boolean_convert(*expr),
+                                                    )
+                                                },
+                                            );
+                                        } else {
+                                            cond = Some(unsafe {
+                                                std::mem::transmute::<Bool<'_>, Bool<'a>>(
+                                                    self.boolean_convert(*expr),
+                                                )
+                                            });
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        if let Some(c) = cond {
+                            self.basis_t[f_num].push((Box::new(c), vars_ret));
+                        }
+                    }
+                }
+            }
             AstNode::Return => {
                 let mut cond = None;
                 for node in self.stack.clone() {
@@ -416,6 +455,11 @@ impl<'a> AklParser<'a> {
             }
         }
         for i in 0..self.funcs.len() {
+            if let AstNode::Func(first, _, _) = *self.funcs[i].clone() {
+                if let AstNode::Ident(name) = *first {
+                    self.func_map.insert(name, i);
+                }
+            }
             self.dfs(i, *self.funcs[i].clone());
             for cond in self.basis_f[i].clone() {
                 let solver = Solver::new(&self.ctx);
@@ -427,6 +471,7 @@ impl<'a> AklParser<'a> {
                     }
                 }
             }
+            dbg!(self.basis_t[i].clone());
         }
         /*let f_num = self.funcs.len();
         for i in 0..f_num {
@@ -461,6 +506,7 @@ pub enum Ops {
     Greater,
     And,
     Or,
+    Xor,
     Add,
     Sub,
     Multply,
@@ -476,8 +522,9 @@ impl Ops {
             ">=" => Self::Geq,
             "<" => Self::Less,
             ">" => Self::Greater,
-            "&&" => Self::And,
-            "||" => Self::Or,
+            "&&" | "&" => Self::And,
+            "||" | "|" => Self::Or,
+            "^" => Self::Xor,
             "+" => Self::Add,
             "-" => Self::Sub,
             "/" => Self::Divide,

@@ -7,8 +7,10 @@ fn parse_numeric_with_boolean() {
         "
         func test(v1: number, v2: number) {
             if (((v1 + 1) == (v2*2)) && ((v1*3) == (v2*5 + 3))) {
-                    call leave ()
                     return
+            }
+            if ((v1 | 1) == (v2 ^ 3)) {
+                call test ((v1*3), (v2*2))
             }
         }
     ",
