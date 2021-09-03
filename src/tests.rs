@@ -9,12 +9,11 @@ fn parse_numeric_with_boolean() {
             if (((v1 + 1) == (v2*2)) && ((v1*3) == (v2*5 + 3))) {
                     return
             }
-            if ((v1 | 1) == (v2 ^ 3)) {
-                call test ((v1*3), (v2*2))
-            }
+            call test ((v1 - 5), (v2 + 2))
         }
     ",
     );
+    dbg!(ast.eval(300, 5, 0));
     //dbg!(ast.funcs.clone());
     panic!("tt");
 }

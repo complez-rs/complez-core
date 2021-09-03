@@ -1,10 +1,13 @@
 use pest::error::*;
 use pest::iterators::Pair;
 use pest::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ops::*;
-use z3::ast::{Ast, Bool, Int};
-use z3::{Config, Context, Solver};
+use z3::ast::{Ast, Bool, BV};
+use z3::{Config, Context, Solver, SatResult};
+
+const BV_SIZE: u32 = 63;
+const INF: i64 = 1_000_000_000_000_000_000;
 
 #[derive(Parser)]
 #[grammar = "./akl.pest"]
@@ -12,7 +15,7 @@ pub struct AklParser<'a> {
     ctx: Context,
     pub funcs: Vec<Box<AstNode>>,
     variables: Vec<Vec<String>>,
-    basis_t: Vec<Vec<(Box<Bool<'a>>, Vec<Box<Int<'a>>>)>>, // Supported arithmetic representation yet
+    basis_t: Vec<Vec<(Box<Bool<'a>>, Vec<Box<BV<'a>>>)>>, // Supported arithmetic representation yet
     basis_f: Vec<Vec<Box<Bool<'a>>>>,
     func_map: HashMap<String, usize>,
     stack: Vec<Box<AstNode>>,
@@ -28,6 +31,9 @@ pub fn numeric_eval(expr: AstNode, value: HashMap<String, i64>) -> i64 {
                 Ops::Sub => lhs_eval - rhs_eval,
                 Ops::Multply => lhs_eval * rhs_eval,
                 Ops::Divide => lhs_eval / rhs_eval,
+                Ops::And => lhs_eval & rhs_eval,
+                Ops::Or => lhs_eval | rhs_eval,
+                Ops::Xor => lhs_eval ^ rhs_eval,
                 _ => {
                     // TODO
                     0
@@ -66,7 +72,7 @@ impl<'a> AklParser<'a> {
         }
     }
 
-    pub fn numeric_convert(&self, expr: AstNode) -> Int<'_> {
+    pub fn numeric_convert(&self, expr: AstNode) -> BV<'_> {
         match expr {
             AstNode::NumericTerm(lhs, rhs, op) => {
                 let lhs_eval = self.numeric_convert(*lhs);
@@ -75,26 +81,29 @@ impl<'a> AklParser<'a> {
                     Ops::Add => lhs_eval + rhs_eval,
                     Ops::Sub => lhs_eval - rhs_eval,
                     Ops::Multply => lhs_eval * rhs_eval,
-                    Ops::Divide => lhs_eval / rhs_eval,
+                    Ops::Divide => BV::from_int(&(lhs_eval.to_int(true) / rhs_eval.to_int(true)), BV_SIZE),
+                    Ops::And => lhs_eval & rhs_eval,
+                    Ops::Or => lhs_eval | rhs_eval,
+                    Ops::Xor => lhs_eval ^ rhs_eval,
                     _ => {
                         // TODO
-                        Int::from_i64(&self.ctx, 0)
+                        BV::from_i64(&self.ctx, 0, BV_SIZE)
                     }
                 }
             }
             AstNode::Constant(c) => {
                 match c {
-                    Constant::Number(x) => Int::from_i64(&self.ctx, x),
+                    Constant::Number(x) => BV::from_i64(&self.ctx, x, BV_SIZE),
                     _ => {
                         // TODO
-                        Int::from_i64(&self.ctx, 0)
+                        BV::from_i64(&self.ctx, 0, BV_SIZE)
                     }
                 }
             }
-            AstNode::Ident(x) => Int::new_const(&self.ctx, x.as_str()),
+            AstNode::Ident(x) => BV::new_const(&self.ctx, x.as_str(), BV_SIZE),
             _ => {
                 // TODO
-                Int::from_i64(&self.ctx, 0)
+                BV::from_i64(&self.ctx, 0, BV_SIZE)
             }
         }
     }
@@ -374,7 +383,8 @@ impl<'a> AklParser<'a> {
                         let mut vars_ret = vec![];
                         for v in vars {
                             vars_ret.push(Box::new(unsafe {
-                                std::mem::transmute::<Int<'_>,Int<'a>>( self.numeric_convert(*v)) }));
+                                std::mem::transmute::<BV<'_>, BV<'a>>(self.numeric_convert(*v))
+                            }));
                         }
                         for node in self.stack.clone() {
                             if let AstNode::If(expr, _) = *node {
@@ -402,6 +412,9 @@ impl<'a> AklParser<'a> {
                         }
                         if let Some(c) = cond {
                             self.basis_t[f_num].push((Box::new(c), vars_ret));
+                        } else {
+                            self.basis_t[f_num].push((Box::new(unsafe {
+                                std::mem::transmute::<Bool<'_>, Bool<'a>>(Bool::from_bool(&self.ctx, true)) }), vars_ret));
                         }
                     }
                 }
@@ -461,24 +474,92 @@ impl<'a> AklParser<'a> {
                 }
             }
             self.dfs(i, *self.funcs[i].clone());
-            for cond in self.basis_f[i].clone() {
+        }
+        return Ok(());
+    }
+
+    pub fn eval(&mut self, max_depth: usize, deg: usize, i: usize) -> Vec<(Vec<i64>, i64)> {
+        let mut res = vec![];
+        // TODO: Currently, parameters must be BVegers - must be fix
+        let mut q: VecDeque<Vec<i64>> = VecDeque::new();
+        let mut dp: HashMap<Vec<i64>, i64> = HashMap::new();
+        for cond in self.basis_f[i].clone() {
+            let solver = Solver::new(&self.ctx);
+            solver.assert(&cond);
+            if solver.check() == SatResult::Sat {
+            if let Some(model) = solver.get_model() {
+                let mut list: Vec<i64> = vec![];
+                let mut failed = false;
+                for var in self.variables[i].clone() {
+                    if let Some(x) = model.eval(&BV::new_const(&self.ctx, var.as_str(), BV_SIZE), true) {
+                        list.push(x.as_i64().unwrap()); // Unwrap must not be fail [PROOF]
+                    } else {
+                        failed = true;
+                        break;
+                    }
+                }
+                if !failed && dp.get(&list.clone()).is_none() {
+                    q.push_back(list.clone());
+                    dp.insert(list.clone(), 1);
+                }
+            }
+            }
+        }
+        let mut cnt = 0;
+        while let Some(state) = q.pop_front() {
+            if cnt == max_depth {
+                // END
+                break;
+            }
+            let cost = dp[&state];
+            // Find adjacencies
+            for (cond1, conds) in self.basis_t[i].clone() {
                 let solver = Solver::new(&self.ctx);
-                solver.assert(&cond);
-                solver.check();
-                if let Some(model) = solver.get_model() {
-                    for var in self.variables[i].clone() {
-                        dbg!(model.eval(&Int::new_const(&self.ctx, var.as_str()), true));
+                solver.assert(&cond1);
+                for i in 0..conds.len() {
+                    solver.assert(&conds[i]._eq(&BV::from_i64(&self.ctx, state[i], BV_SIZE)));
+                }
+                for _d in 0..deg {
+                    if solver.check() != SatResult::Sat {
+                        break;
+                    }
+                    if let Some(model) = solver.get_model() {
+                        let mut list: Vec<i64> = vec![];
+                        let mut failed = false;
+                        for var in self.variables[i].clone() {
+                            if let Some(x) =
+                                model.eval(&BV::new_const(&self.ctx, var.as_str(), BV_SIZE), true)
+                            {
+                                list.push(x.as_i64().unwrap()); // Unwrap must not be fail [PROOF]
+                                solver.assert(&!(BV::new_const(&self.ctx, var.as_str(), BV_SIZE)._eq(&x)));
+                            } else {
+                                failed = true;
+                                break;
+                            }
+                        }
+                        if !failed {
+                            if let Some(x) = dp.get_mut(&list.clone()) {
+                                if (*x) + cost + 1 < INF {
+                                    *x += cost+1;
+                                } else {
+                                    *x = INF;
+                                }
+                            } else {
+                                q.push_back(list.clone());
+                                dp.insert(list.clone(), cost+1);
+                            }
+                        }
+                    } else {
+                        break;
                     }
                 }
             }
-            dbg!(self.basis_t[i].clone());
+            cnt += 1;
         }
-        /*let f_num = self.funcs.len();
-        for i in 0..f_num {
-            self.funcs[i] = Box::new(self.compress(i, *self.funcs[i]));
-        }*/
-
-        return Ok(());
+        for (list, cost) in dp {
+            res.push((list, cost));
+        }
+        res
     }
 }
 
