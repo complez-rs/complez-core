@@ -1,4 +1,6 @@
-command = { akl_loop | akl_if | akl_call | akl_assign | akl_return }
+command = { no_block | with_block }
+no_block = _{ (akl_call | akl_assign | akl_return) ~ ";" }
+with_block = _{ akl_loop | akl_if }
 top_command = { func }
 expr = _{ command | top_command }
 vtype = { "number" | "string" | "set" | "boolean" }

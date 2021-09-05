@@ -1,10 +1,12 @@
 use pest::error::*;
 use pest::iterators::Pair;
 use pest::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, HashSet};
 use std::ops::*;
 use z3::ast::{Ast, Bool, BV};
 use z3::{Config, Context, Solver, SatResult};
+
+use crate::language::topological_sort::do_topological_sort;
 
 const BV_SIZE: u32 = 63;
 const INF: i64 = 1_000_000_000_000_000_000;
@@ -149,7 +151,21 @@ impl<'a> AklParser<'a> {
                         } else {
                             boolean()
                         }
-                    }
+                    },
+                    AstNode::Ident(_) => {
+                        match *r {
+                            AstNode::NumericTerm(_, _, _) => numeric(),
+                            AstNode::BooleanTerm(_, _, _) => boolean(),
+                            AstNode::Constant(x) => {
+                                if x.is_numeric() {
+                                    numeric()
+                                } else {
+                                    boolean()
+                                }
+                            },
+                            _ => Bool::from_bool(&self.ctx, false),
+                        }
+                    },
                     _ => Bool::from_bool(&self.ctx, false),
                 }
             }
@@ -468,6 +484,7 @@ impl<'a> AklParser<'a> {
             }
         }
         for i in 0..self.funcs.len() {
+            dbg!(self.funcs[i].clone());
             if let AstNode::Func(first, _, _) = *self.funcs[i].clone() {
                 if let AstNode::Ident(name) = *first {
                     self.func_map.insert(name, i);
@@ -482,7 +499,11 @@ impl<'a> AklParser<'a> {
         let mut res = vec![];
         // TODO: Currently, parameters must be BVegers - must be fix
         let mut q: VecDeque<Vec<i64>> = VecDeque::new();
-        let mut dp: HashMap<Vec<i64>, i64> = HashMap::new();
+        let mut dp: Vec<i64> = vec![];
+        let mut map: HashMap<Vec<i64>, usize> = HashMap::new();
+        let mut map_inv: Vec<Vec<i64>> = vec![];
+        let mut adj: Vec<Vec<usize>> = vec![];
+        let mut cnt = 0;
         for cond in self.basis_f[i].clone() {
             let solver = Solver::new(&self.ctx);
             solver.assert(&cond);
@@ -498,20 +519,24 @@ impl<'a> AklParser<'a> {
                         break;
                     }
                 }
-                if !failed && dp.get(&list.clone()).is_none() {
+                if !failed && map.get(&list.clone()).is_none() {
                     q.push_back(list.clone());
-                    dp.insert(list.clone(), 1);
+                    map.insert(list.clone(), cnt);
+                    dp.push(1);
+                    adj.push(vec![]);
+                    map_inv.push(list.clone());
+                    cnt += 1;
                 }
             }
             }
         }
-        let mut cnt = 0;
         while let Some(state) = q.pop_front() {
             if cnt == max_depth {
                 // END
                 break;
             }
-            let cost = dp[&state];
+            let idx = map[&state];
+            //let cost = dp[&state];
             // Find adjacencies
             for (cond1, conds) in self.basis_t[i].clone() {
                 let solver = Solver::new(&self.ctx);
@@ -538,26 +563,44 @@ impl<'a> AklParser<'a> {
                             }
                         }
                         if !failed {
-                            if let Some(x) = dp.get_mut(&list.clone()) {
-                                if (*x) + cost + 1 < INF {
-                                    *x += cost+1;
+                            /*if let Some(x) = dp.get_mut(&list.clone()) {
+                                if (*x) + cost < INF {
+                                    *x += cost;
                                 } else {
                                     *x = INF;
                                 }
                             } else {
                                 q.push_back(list.clone());
-                                dp.insert(list.clone(), cost+1);
+                                dp.insert(list.clone(), cost);
+                            }*/
+                            if let None = map.get(&list.clone()) {
+                                q.push_back(list.clone());
+                                map.insert(list.clone(), cnt);
+                                map_inv.push(list.clone());
+                                cnt += 1;
+                                adj.push(vec![]);
+                                dp.push(0);
                             }
+                            adj[map[&list]].push(idx);
                         }
                     } else {
                         break;
                     }
                 }
             }
-            cnt += 1;
         }
-        for (list, cost) in dp {
-            res.push((list, cost));
+        let ord = do_topological_sort(adj.clone());
+        for u in ord {
+            for v in adj[u].clone() {
+                if dp[u] + dp[v] >= INF {
+                    dp[u] = INF;
+                } else {
+                    dp[u] += dp[v];
+                }
+            }
+        }
+        for i in 0..cnt {
+            res.push((map_inv[i].clone(), dp[i]));
         }
         res
     }
@@ -650,7 +693,7 @@ impl Constant {
         match source {
             "true" => Self::Boolean(true),
             "false" => Self::Boolean(false),
-            _ => Self::Unknown,
+            _ => Self::parse_numeric(source), // Failed
         }
     }
 
