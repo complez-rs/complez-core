@@ -1,10 +1,11 @@
 use pest::error::*;
 use pest::iterators::Pair;
 use pest::*;
-use std::collections::{HashMap, VecDeque, HashSet};
+use std::collections::{HashMap, VecDeque, BTreeSet};
 use std::ops::*;
 use z3::ast::{Ast, Bool, BV};
 use z3::{Config, Context, Solver, SatResult};
+use uuid::Uuid;
 
 use crate::language::topological_sort::do_topological_sort;
 
@@ -21,6 +22,7 @@ pub struct AklParser<'a> {
     basis_f: Vec<Vec<Box<Bool<'a>>>>,
     func_map: HashMap<String, usize>,
     stack: Vec<Box<AstNode>>,
+    var_stack: Vec<Variable>,
 }
 
 pub fn numeric_eval(expr: AstNode, value: HashMap<String, i64>) -> i64 {
@@ -71,6 +73,7 @@ impl<'a> AklParser<'a> {
             basis_f: vec![],
             basis_t: vec![],
             stack: vec![],
+            var_stack: vec![],
         }
     }
 
@@ -249,7 +252,22 @@ impl<'a> AklParser<'a> {
         let pairs: Vec<Pair<Rule>> = expr.into_inner().collect();
         let expr = self.parse_boolean(pairs[0].clone());
         let block = self.parse_block(pairs[1].clone());
-        AstNode::Loop(Box::new(expr), Box::new(block))
+        let uuid = Uuid::from_u128(self.funcs.len() as u128);
+        let name = uuid.to_simple().encode_lower(&mut Uuid::encode_buffer()).to_string();
+        self.func_map.insert(name.clone(), self.funcs.len());
+        let mut v = vec![];
+        let v1 = vec![Box::new(block)];
+        let block1 = AstNode::Block(v1);
+        v.push(Box::new(AstNode::If(Box::new(expr), Box::new(block1))));
+        v.push(Box::new(AstNode::Return));
+        let block2 = AstNode::Block(v);
+        let variables = self.var_stack.clone(); // TODO
+        let mut variables2 = vec![]; // TODO
+        for var in variables.clone() {
+            variables2.push(var.name);
+        }
+        self.funcs.push(Box::new(AstNode::Func(Box::new(AstNode::Ident(name.clone())),variables,Box::new(block2))));
+        AstNode::Call(Box::new(AstNode::Ident(name)), variables2)
     }
 
     pub fn parse_expr(&mut self, expr: Pair<Rule>) -> AstNode {
@@ -323,11 +341,15 @@ impl<'a> AklParser<'a> {
         while func.peek().unwrap().as_rule() == Rule::parm_with_type {
             variables.push(self.parse_func_parm(func.next().unwrap()));
         }
+        for var in variables.clone() {
+            self.var_stack.push(var);
+        }
         let block = self.parse_block(func.next().unwrap());
         self.basis_f.push(vec![]);
         self.basis_t.push(vec![]);
         self.variables.push(vec![]);
         for var in variables.clone() {
+            self.var_stack.pop();
             if let AstNode::Ident(name) = *var.name {
                 self.variables[self.funcs.len()].push(name);
             }
@@ -347,36 +369,6 @@ impl<'a> AklParser<'a> {
             _ => {}
         }
     }
-
-    /*pub fn compress(&mut self, node: AstNode, variables: Vec<Variable>) -> AstNode {
-        match node {
-            AstNode::Func(name, parms, block) => {
-                AstNode::Func(name, parms, Box::new(self.compress(*block, parms)))
-            },
-            AstNode::Loop(expr, block) => {
-                let uuid = Uuid::from_u128(self.funcs.len() as u128);
-                let name = AstNode::Ident(uuid.to_simple().encode_lower(&mut Uuid::encode_buffer()).to_string());
-                self.func_map.insert(name, self.funcs.len());
-                let mut v = vec![];
-                let mut v1 = vec![Box::new(self.compress(*block, variables)), Box::new(AstNode::Call(Box::new(AstNode::Return)];
-                let block1 = AstNode::Block(v1);
-                v.push(Box::new(AstNode::If(expr, block1)));
-                v.push(Box::new(AstNode::Return));
-                let block2 = AstNode::Block(v);
-                let func = AstNode::Func(Box::new(name),variables,block2);
-            },
-            AstNode::If(expr, block) => {
-
-            },
-            AstNode::Block(nodes) => {
-                let mut v = vec![];
-                for node in nodes {
-                    v.push(Box::new(self.compress(f_num, *node)));
-                }
-                AstNode::Block(v)
-            },
-        }
-    }*/
 
     pub fn dfs(&mut self, f_num: usize, node: AstNode) {
         self.stack.push(Box::new(node.clone()));
@@ -497,7 +489,7 @@ impl<'a> AklParser<'a> {
 
     pub fn eval(&mut self, max_depth: usize, deg: usize, i: usize) -> Vec<(Vec<i64>, i64)> {
         let mut res = vec![];
-        // TODO: Currently, parameters must be BVegers - must be fix
+        // TODO: Currently, parameters must be BV - must be fix
         let mut q: VecDeque<Vec<i64>> = VecDeque::new();
         let mut dp: Vec<i64> = vec![];
         let mut map: HashMap<Vec<i64>, usize> = HashMap::new();
@@ -592,10 +584,10 @@ impl<'a> AklParser<'a> {
         let ord = do_topological_sort(adj.clone());
         for u in ord {
             for v in adj[u].clone() {
-                if dp[u] + dp[v] >= INF {
+                if dp[u] + dp[v]+1 >= INF {
                     dp[u] = INF;
                 } else {
-                    dp[u] += dp[v];
+                    dp[u] += dp[v]+1;
                 }
             }
         }
@@ -725,7 +717,6 @@ pub enum AstNode {
     Block(Vec<Box<AstNode>>),
     Func(Box<AstNode>, Vec<Variable>, Box<AstNode>),
     If(Box<AstNode>, Box<AstNode>),
-    Loop(Box<AstNode>, Box<AstNode>),
     Ident(String),
     Call(Box<AstNode>, Vec<Box<AstNode>>),
     Assign(Box<AstNode>, Box<AstNode>),
