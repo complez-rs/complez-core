@@ -1,36 +1,113 @@
+program = _{ SOI ~ top_command* ~ EOI }
 command = { no_block | with_block }
-no_block = _{ (akl_call | akl_assign | akl_return) ~ ";" }
+no_block = _{
+  (akl_call
+    | akl_assign
+    | akl_return )
+    ~ ";"
+}
 with_block = _{ akl_loop | akl_if }
 top_command = { func }
 expr = _{ command | top_command }
-vtype = { "number" | "string" | "set" | "boolean" }
+vtype = {
+  "number"
+  | "string"
+  | "set"
+  | "boolean"
+}
+
 parm_with_type = { ident ~ ":" ~ vtype ~ ","? }
 block = { command* }
-numeric_ops = { "-" | "+" | "/" | "*" | "%" | "&" | "|" | "^" | "<<" | ">>" }
-order_ops = { "<=" | ">=" | "<" | ">" }
+
+numeric_ops = {
+   "-"
+   | "+"
+   | "/"
+   | "*"
+   | "%"
+   | "&"
+   | "|"
+   | "^"
+   | "<<"
+   | ">>"
+}
+order_ops = {
+   "<="
+   | ">="
+   | "<"
+   | ">"
+}
 eq_ops = { "==" | "!=" }
 logic_ops = { eq_ops | order_ops }
-boolean_ops = { "&&" | "||" }
+boolean_ops = { "&&"  | "||" }
 assign_ops = { "=" }
-ops = _{ numeric_ops | logic_ops | assign_ops }
-boolean_constant = { "true" | "false" }
+   ops = _{
+   numeric_ops
+   | logic_ops
+   | assign_ops
+}
+
+boolean_constant = { "true"  | "false" }
 constants = { number | boolean_constant }
 value = _{ constants | ident }
-boolean = _{ term ~ eq_ops ~ term | boolean_term ~ (boolean_ops ~ boolean_term)* }
-boolean_term = { value | "(" ~ boolean ~ ")" }
-numeric = _{ numeric_term ~ (numeric_ops ~ numeric_term)* }
-numeric_term = { value | "(" ~ numeric ~ ")" }
+boolean = _{
+   term
+   ~ eq_ops
+   ~ term
+   | boolean_term
+   ~ (boolean_ops ~ boolean_term)*
+}
+boolean_term = {
+   value
+   | "(" ~ boolean ~ ")"
+}
+numeric = _{
+   numeric_term
+   ~ (numeric_ops ~ numeric_term)*
+}
+numeric_term = {
+   value
+   | "(" ~ numeric ~ ")"
+}
 term = _{ boolean_term | numeric_term }
 boolean_block = { boolean }
-func = { "func" ~ ident ~ "(" ~ parm_with_type* ~ ")" ~ "{" ~ block ~ "}" }
+
+func = {
+   "func"
+   ~ ident
+   ~ "(" ~ parm_with_type* ~ ")"
+   ~ "{" ~ block ~ "}"
+}
 parm = { term ~ ","? }
-akl_loop = { "loop" ~ boolean_block ~ "{" ~ block ~ "}" }
-akl_if = { "if" ~ boolean_block ~ "{" ~ block ~ "}" }
-akl_call = { "call" ~ ident ~ "(" ~  parm* ~ ")" }
-akl_assign = { ident ~ assign_ops ~ value }
+
+akl_loop = {
+   "loop"
+   ~ boolean_block
+   ~ "{" ~ block ~ "}"
+}
+akl_if = {
+   "if"
+   ~ boolean_block
+   ~ "{" ~ block ~ "}"
+}
+akl_call = {
+   "call"
+   ~ ident
+   ~ "(" ~  parm* ~ ")"
+}
+akl_assign = {
+   ident
+   ~ assign_ops
+   ~ value
+}
 akl_return = { "return" }
-program = _{ SOI ~ top_command* ~ EOI }
+
 number = @{ "-"? ~ ASCII_DIGIT+ }
 ident = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
-WHITESPACE = _{ " " | "\t" | "\n" | "\r" }
+WHITESPACE = _{
+   " "
+   | "\t"
+   | "\n"
+   | "\r"
+}
 COMMENT = _{ "NB." ~ (!"\n" ~ ANY)* }
